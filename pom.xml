@@ -32,7 +32,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <netty.version>4.2.4.Final</netty.version>
-        <tinystruct.version>1.7.6</tinystruct.version>
+        <tinystruct.version>1.7.7</tinystruct.version>
     </properties>
 
     <dependencies>
