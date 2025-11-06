@@ -34,7 +34,6 @@ import static io.netty.buffer.Unpooled.copiedBuffer;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 import static org.tinystruct.Application.LANGUAGE;
-import static org.tinystruct.Application.METHOD;
 import static org.tinystruct.http.Constants.*;
 import static org.tinystruct.http.Header.SET_COOKIE;
 
@@ -117,7 +116,6 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             }
 
             context.setAttribute(HTTP_HOST, http_protocol + hostName + url_prefix);
-            context.setAttribute(METHOD, request.method());
             context.setAttribute(HTTP_REQUEST, request);
             context.setAttribute(HTTP_RESPONSE, response);
 
