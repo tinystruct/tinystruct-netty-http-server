@@ -6,7 +6,7 @@
     <name>netty http server module</name>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-netty-http-server</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <description>A tinystruct-based module to enable netty http server support.</description>
     <url>https://tinystruct.org</url>
     <licenses>
@@ -31,8 +31,9 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.6.Final</netty.version>
-        <tinystruct.version>1.7.9</tinystruct.version>
+        <netty.version>4.2.7.Final</netty.version>
+        <tinystruct.version>1.7.10</tinystruct.version>
+        <jupiter.version>6.0.1</jupiter.version>
     </properties>
 
     <dependencies>
@@ -93,6 +94,12 @@
             <version>0.0.26.Final</version>
             <classifier>linux-x86_64</classifier>
             <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>${jupiter.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     <dependencyManagement>
