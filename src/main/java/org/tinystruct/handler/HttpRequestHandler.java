@@ -24,6 +24,8 @@ import org.tinystruct.mcp.MCPSpecification;
 import org.tinystruct.system.ApplicationManager;
 import org.tinystruct.system.Configuration;
 import org.tinystruct.system.Language;
+import org.tinystruct.system.annotation.Action;
+import org.tinystruct.system.annotation.Action.Mode;
 import org.tinystruct.system.util.StringUtilities;
 
 import java.nio.charset.StandardCharsets;
@@ -76,8 +78,8 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         }
 
         String[] parameterNames = request.parameterNames();
-        for (String parameter: parameterNames) {
-            if(parameter.startsWith("--")) {
+        for (String parameter : parameterNames) {
+            if (parameter.startsWith("--")) {
                 context.setAttribute(parameter, request.getParameter(parameter));
             }
         }
@@ -127,8 +129,9 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
             String query = request.query();
             if (query != null && query.length() > 1) {
+                Mode mode = Mode.fromName(request.method().name());
                 query = StringUtilities.htmlSpecialChars(query);
-                if (null == (message = ApplicationManager.call(query, context))) {
+                if (null == (message = ApplicationManager.call(query, context, mode))) {
                     message = "No response retrieved!";
                 } else if (message instanceof Response) {
                     // Write the response.
@@ -140,7 +143,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                     return;
                 }
             } else {
-                message = ApplicationManager.call(this.configuration.getOrDefault("default.home.page", "say/Praise the Lord."), context);
+                message = ApplicationManager.call(this.configuration.getOrDefault("default.home.page", "say/Praise the Lord."), context, Action.Mode.HTTP_GET);
             }
         } catch (ApplicationException e) {
             StackTraceElement[] trace = e.getStackTrace();
@@ -270,12 +273,11 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 String sessionId = context.getId();
                 SSEPushManager pushManager = getAppropriatePushManager(isMCP);
                 pushManager.register(sessionId, response);
-                if(call instanceof Builder) {
+                if (call instanceof Builder) {
                     pushManager.push(sessionId, (Builder) call);
-                }
-                else if(call instanceof String) {
+                } else if (call instanceof String) {
                     Builder builder = new Builder();
-                    builder.parse((String)call);
+                    builder.parse((String) call);
                     pushManager.push(sessionId, builder);
                 }
             }
