@@ -44,7 +44,7 @@ public class HttpProxyServer extends ProxyServer implements Bootstrap {
             @Argument(key = "server-port", description = "Server port"),
             @Argument(key = "remote-server-host", description = "Remote Server host"),
             @Argument(key = "remote-server-port", description = "Remote Server port"),
-    }, example = "bin/dispatcher start --import org.tinystruct.system.RedisProxyServer --server-port 8080", mode = org.tinystruct.application.Action.Mode.CLI)
+    }, example = "bin/dispatcher start --import org.tinystruct.system.RedisProxyServer --server-port 8080", mode = Action.Mode.CLI)
     @Override
     public void start() throws ApplicationException {
         if (getContext() != null) {

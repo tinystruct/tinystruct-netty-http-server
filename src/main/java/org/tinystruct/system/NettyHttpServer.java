@@ -100,7 +100,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             @Argument(key = "https.proxyPort", description = "Proxy port for https"),
             @Argument(key = "logging.enabled", description = "Enable Netty logging (default: false)"),
             @Argument(key = "logging.level", description = "Netty logging level (TRACE, DEBUG, INFO, WARN, ERROR) (default: INFO)")
-    }, example = "bin/dispatcher start --import org.tinystruct.system.NettyHttpServer --server-port 777", mode = org.tinystruct.application.Action.Mode.CLI)
+    }, example = "bin/dispatcher start --import org.tinystruct.system.NettyHttpServer --server-port 777", mode = Action.Mode.CLI)
     @Override
     public void start() throws ApplicationException {
 
@@ -129,7 +129,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             }
         }
 
-        System.out.println(ApplicationManager.call("--logo", null, org.tinystruct.application.Action.Mode.CLI));
+        System.out.println(ApplicationManager.call("--logo", null, Action.Mode.CLI));
 
         String charsetName = null;
         Settings settings = new Settings();
@@ -195,7 +195,16 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
 
             // Open the default browser
             getContext().setAttribute("--url", "http://localhost:" + this.port);
-            ApplicationManager.call("open", getContext(), org.tinystruct.application.Action.Mode.CLI);
+            ApplicationManager.call("open", getContext(), Action.Mode.CLI);
+
+            // Keep the server running
+            logger.info("Server is running. Press Ctrl+C to stop.");
+
+            // Add shutdown hook
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                logger.info("Shutting down HTTP server...");
+                stop();
+            }));
 
             // Wait until the server socket is closed.
             future.channel().closeFuture().sync();
