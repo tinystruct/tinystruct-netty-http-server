@@ -42,6 +42,7 @@ import org.tinystruct.http.Session;
 import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Argument;
 
+import java.io.File;
 import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -71,6 +72,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
     private final EventLoopGroup workgroup;
     private final Logger logger = Logger.getLogger(NettyHttpServer.class.getName());
     private int port = 8080;
+    private ChannelFuture future;
 
     public NettyHttpServer() {
         if (Epoll.isAvailable()) {
@@ -84,7 +86,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
 
     @Override
     public void init() {
-
+        this.setTemplateRequired(false);
     }
 
     @Override
@@ -129,6 +131,12 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             }
         }
 
+        // Add shutdown hook BEFORE starting server
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            logger.info("Shutting down HTTP server...");
+            stop();
+        }));
+
         System.out.println(ApplicationManager.call("--logo", null, Action.Mode.CLI));
 
         String charsetName = null;
@@ -156,8 +164,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             // Configure SSL.
             final SslContext sslCtx;
             if (SSL) {
-                SelfSignedCertificate ssc = new SelfSignedCertificate();
-                sslCtx = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey()).build();
+                sslCtx = configureSsl(settings);
             } else {
                 sslCtx = null;
             }
@@ -190,7 +197,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             }).option(ChannelOption.SO_BACKLOG, 1024).option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000).childOption(ChannelOption.SO_KEEPALIVE, false).childOption(ChannelOption.TCP_NODELAY, true);
 
             // Bind and start to accept incoming connections.
-            ChannelFuture future = bootstrap.bind(port).sync();
+            future = bootstrap.bind(port).sync();
             logger.info("Netty server (" + port + ") startup in " + (System.currentTimeMillis() - start) + " ms");
 
             // Open the default browser
@@ -200,32 +207,58 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             // Keep the server running
             logger.info("Server is running. Press Ctrl+C to stop.");
 
-            // Add shutdown hook
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                logger.info("Shutting down HTTP server...");
-                stop();
-            }));
-
             // Wait until the server socket is closed.
             future.channel().closeFuture().sync();
         } catch (Exception e) {
             throw new ApplicationException(e.getMessage(), e.getCause());
-        } finally {
-            this.stop();
         }
     }
 
     @Override
     public void stop() {
+        // Close the channel first
+        if (future != null && future.channel().isOpen()) {
+            try {
+                future.channel().close().sync();
+            } catch (InterruptedException e) {
+                logger.log(Level.WARNING, "Interrupted while closing channel", e);
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Then shutdown event loops gracefully
         bossgroup.shutdownGracefully();
         workgroup.shutdownGracefully();
     }
 
-    @Action(value = "error", description = "Error page")
-    public Object exceptionCaught() throws ApplicationException {
-        Request request = (Request) getContext().getAttribute(HTTP_REQUEST);
-        Response response = (Response) getContext().getAttribute(HTTP_RESPONSE);
+    private SslContext configureSsl(Configuration<String> settings) throws Exception {
+        if (!SSL) {
+            return null;
+        }
 
+        String certPath = settings.get("ssl.certificate.path");
+        String keyPath = settings.get("ssl.key.path");
+
+        if (!certPath.isEmpty() && !keyPath.isEmpty()) {
+            // Use provided certificate
+            return SslContextBuilder.forServer(
+                    new File(certPath),
+                    new File(keyPath)
+            ).build();
+        } else {
+            // Fall back to self-signed certificate
+            logger.warning("Using self-signed certificate. " +
+                    "Configure ssl.certificate.path and ssl.key.path for production.");
+            SelfSignedCertificate ssc = new SelfSignedCertificate();
+            return SslContextBuilder.forServer(
+                    ssc.certificate(),
+                    ssc.privateKey()
+            ).build();
+        }
+    }
+
+    @Action(value = "error", description = "Error page")
+    public Object exceptionCaught(Request request, Response response) throws ApplicationException {
         Reforward reforward = new Reforward(request, response);
         this.setVariable("from", reforward.getFromURL());
 

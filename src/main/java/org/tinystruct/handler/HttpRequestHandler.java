@@ -247,7 +247,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     private void handleSSE(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
                            Response<FullHttpResponse, FullHttpResponse> response, final Context context, boolean keepAlive) {
         // Set SSE headers using the existing response infrastructure
-        response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream, application/json");
+        response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream; charset=utf-8");
         response.addHeader(Header.CACHE_CONTROL.name(), "no-cache");
         response.addHeader(Header.CONNECTION.name(), "keep-alive");
         response.addHeader(Header.TRANSFER_ENCODING.name(), "chunked");
