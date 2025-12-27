@@ -61,6 +61,43 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest original) {
+        // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
+        if (original.method() == HttpMethod.OPTIONS) {
+            // CORS preflight handling with configurability
+            String origin = original.headers().get(HttpHeaderNames.ORIGIN);
+            String acrMethod = original.headers().get(HttpHeaderNames.ACCESS_CONTROL_REQUEST_METHOD);
+            String acrHeaders = original.headers().get(HttpHeaderNames.ACCESS_CONTROL_REQUEST_HEADERS);
+
+            // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
+            String allowOrigin = configuration.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
+            FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK);
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
+            // Make responses vary by Origin when echoing it
+            if (origin != null) {
+                response.headers().set(HttpHeaderNames.VARY, "Origin");
+            }
+
+            // Allow methods: prefer configured list, otherwise echo requested or use sensible defaults
+            String allowMethods = configuration.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS");
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS, allowMethods);
+
+            // Allow headers: prefer configured list, otherwise echo requested or common headers
+            String allowHeaders = configuration.getOrDefault("cors.allowed.headers", acrHeaders != null ? acrHeaders : "Content-Type,Authorization");
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS, allowHeaders);
+
+            // Allow credentials if explicitly enabled in settings
+            if ("true".equalsIgnoreCase(configuration.get("cors.allow.credentials"))) {
+                response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
+            }
+
+            // Cache the preflight response for a configurable duration (seconds)
+            String maxAge = configuration.getOrDefault("cors.preflight.maxage", "3600");
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_MAX_AGE, maxAge);
+
+            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+            return;
+        }
         // Decide whether to close the connection or not.
         boolean keepAlive = HttpUtil.isKeepAlive(original);
         boolean ssl = Boolean.parseBoolean(configuration.getOrDefault("ssl.enabled", "false"));
