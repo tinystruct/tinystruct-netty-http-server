@@ -6,7 +6,7 @@
     <name>netty http server module</name>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-netty-http-server</artifactId>
-    <version>1.0.4</version>
+    <version>1.0.5</version>
     <description>A tinystruct-based module to enable netty http server support.</description>
     <url>https://tinystruct.org</url>
     <licenses>
@@ -31,9 +31,9 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.7.Final</netty.version>
-        <tinystruct.version>1.7.12</tinystruct.version>
-        <jupiter.version>6.0.1</jupiter.version>
+        <netty.version>4.2.9.Final</netty.version>
+        <tinystruct.version>1.7.17</tinystruct.version>
+        <jupiter.version>6.0.2</jupiter.version>
     </properties>
 
     <dependencies>
