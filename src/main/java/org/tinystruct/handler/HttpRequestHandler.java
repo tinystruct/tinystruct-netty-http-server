@@ -99,8 +99,6 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             return;
         }
 
-        ctx.writeAndFlush(response);
-
         // Decide whether to close the connection or not.
         boolean keepAlive = HttpUtil.isKeepAlive(original);
         boolean ssl = Boolean.parseBoolean(configuration.getOrDefault("ssl.enabled", "false"));
@@ -126,6 +124,18 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
         HttpResponseStatus status = OK;
         ResponseBuilder response = new ResponseBuilder(new DefaultFullHttpResponse(HTTP_1_1, status), ctx);
+
+        // Set CORS headers on the actual response
+        Object origin = request.headers().get(Header.ORIGIN);
+        String allowOrigin = configuration.getOrDefault("cors.allowed.origins", origin != null ? origin.toString() : "*");
+        response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN.toString(), allowOrigin);
+        if (origin != null) {
+            response.addHeader(HttpHeaderNames.VARY.toString(), "Origin");
+        }
+        if ("true".equalsIgnoreCase(configuration.get("cors.allow.credentials"))) {
+            response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS.toString(), "true");
+        }
+
         String host = request.headers().get(Header.HOST).toString();
         Object message;
         try {
