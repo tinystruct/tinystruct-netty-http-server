@@ -6,7 +6,7 @@
     <name>netty http server module</name>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct-netty-http-server</artifactId>
-    <version>1.0.5</version>
+    <version>1.0.6</version>
     <description>A tinystruct-based module to enable netty http server support.</description>
     <url>https://tinystruct.org</url>
     <licenses>
