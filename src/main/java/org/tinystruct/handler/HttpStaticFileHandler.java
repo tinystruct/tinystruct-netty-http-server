@@ -108,7 +108,7 @@ public class HttpStaticFileHandler extends SimpleChannelInboundHandler<FullHttpR
         }
 
         // Not allow too long string.
-        if (uri.length() > 255) {
+        if (uri.length() > 8192) {
             throw new IllegalArgumentException("Input too long");
         }
 
