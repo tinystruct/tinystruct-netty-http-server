@@ -96,7 +96,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             String maxAge = configuration.getOrDefault("cors.preflight.maxage", "3600");
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_MAX_AGE, maxAge);
 
-            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, -1);
+            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
             return;
         }
