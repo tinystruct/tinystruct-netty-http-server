@@ -82,8 +82,10 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             String acrMethod = original.headers().get(HttpHeaderNames.ACCESS_CONTROL_REQUEST_METHOD);
             String acrHeaders = original.headers().get(HttpHeaderNames.ACCESS_CONTROL_REQUEST_HEADERS);
 
-            // Allow methods: prefer configured list, otherwise echo requested or use sensible defaults
-            String allowMethods = configuration.getOrDefault("cors.allowed.methods", acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS");
+            // Allow methods: prefer configured list, otherwise echo requested or use
+            // sensible defaults
+            String allowMethods = configuration.getOrDefault("cors.allowed.methods",
+                    acrMethod != null ? acrMethod : "GET,POST,PUT,DELETE,OPTIONS,PATCH");
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS, allowMethods);
 
             // Allow headers: prefer configured list, otherwise echo requested or common headers
@@ -109,9 +111,16 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         this.service(ctx, request, context, keepAlive);
     }
 
-    private void service(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request, final Context context, boolean keepAlive) {
+    private void service(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
+            final Context context, boolean keepAlive) {
+        // Compute CORS headers FIRST — they must be present on every response,
+        // including error responses returned before any further processing.
+        Object origin = request.headers().get(Header.ORIGIN);
+        String allowOrigin = configuration.getOrDefault("cors.allowed.origins",
+                origin != null ? origin.toString() : "*");
+
         if (!authenticateRequest(request, context)) {
-            sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.");
+            sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.", allowOrigin);
             return;
         }
 
@@ -126,8 +135,6 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         ResponseBuilder response = new ResponseBuilder(new DefaultFullHttpResponse(HTTP_1_1, status), ctx);
 
         // Set CORS headers on the actual response
-        Object origin = request.headers().get(Header.ORIGIN);
-        String allowOrigin = configuration.getOrDefault("cors.allowed.origins", origin != null ? origin.toString() : "*");
         response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN.toString(), allowOrigin);
         if (origin != null) {
             response.addHeader(HttpHeaderNames.VARY.toString(), "Origin");
@@ -266,8 +273,28 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             String authHeader = authorization.toString();
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
                 String token = authHeader.substring(7);
+
+                String secret = configuration.get("jwt.secret");
+                if (secret == null || secret.trim().isEmpty()) {
+                    // jwt.secret is not configured — cannot validate Bearer token.
+                    // Log a warning and reject the request to avoid using a weak/empty key.
+                    System.err.println("[WARNING] jwt.secret is not configured. " +
+                            "Bearer token authentication is disabled. " +
+                            "Please set jwt.secret (>= 256-bit) in application.properties.");
+                    return false;
+                }
+
                 JWTManager jwtManager = new JWTManager();
-                jwtManager.withSecret(configuration.get("jwt.secret"));
+                jwtManager.withBase64Secret(secret);
+
+                String timezone = configuration.get("jwt.timezone");
+                if (timezone != null && !timezone.trim().isEmpty()) {
+                    try {
+                        jwtManager.withTimezone(timezone);
+                    } catch (NumberFormatException e) {
+                        System.err.println("[WARNING] Invalid jwt.timezone value: " + timezone);
+                    }
+                }
 
                 try {
                     Jws<Claims> claims = jwtManager.parseToken(token);
@@ -275,6 +302,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                     return true;
                 } catch (JwtException e) {
                     // Log authentication failure
+                    System.err.println("[WARNING] JWT validation failed: " + e.getMessage());
                     return false;
                 }
             }
@@ -347,11 +375,17 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         }
     }
 
-    private void sendErrorResponse(ChannelHandlerContext ctx, HttpResponseStatus status, String message) {
+    private void sendErrorResponse(ChannelHandlerContext ctx, HttpResponseStatus status, String message,
+            String allowOrigin) {
         ByteBuf content = copiedBuffer(message, CharsetUtil.UTF_8);
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, status, content);
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
         response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+        // CORS header must be present even on error responses so the browser
+        // can read the status code and body instead of reporting a CORS failure.
+        if (allowOrigin != null && !allowOrigin.isEmpty()) {
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
+        }
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
