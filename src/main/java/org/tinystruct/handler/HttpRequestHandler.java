@@ -63,9 +63,11 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest original) {
         String origin = original.headers().get(HttpHeaderNames.ORIGIN);
         // Allow origins: prefer explicit setting, otherwise echo Origin or wildcard
-        String allowOrigin = configuration.getOrDefault("cors.allowed.origins", origin != null ? origin : "*");
+        String allowOrigin = getAllowOrigin(origin);
         FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, OK);
-        response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
+        if (allowOrigin != null) {
+            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
+        }
         // Make responses vary by Origin when echoing it
         if (origin != null) {
             response.headers().set(HttpHeaderNames.VARY, "Origin");
@@ -111,13 +113,40 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         this.service(ctx, request, context, keepAlive);
     }
 
+    private String getAllowOrigin(String origin) {
+        // Get the configured allowed origins.
+        String allowedOrigins = configuration.get("cors.allowed.origins");
+
+        if (allowedOrigins == null || allowedOrigins.trim().isEmpty()) {
+            return origin != null ? origin : "*";
+        }
+
+        if ("*".equals(allowedOrigins)) {
+            // If credentials are allowed, we MUST echo the origin instead of returning "*"
+            if ("true".equalsIgnoreCase(configuration.get("cors.allow.credentials"))) {
+                return origin != null ? origin : "*";
+            }
+            return "*";
+        }
+
+        if (origin != null) {
+            String[] origins = allowedOrigins.split(",");
+            for (String allowed : origins) {
+                if (origin.equalsIgnoreCase(allowed.trim())) {
+                    return origin;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private void service(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
             final Context context, boolean keepAlive) {
         // Compute CORS headers FIRST — they must be present on every response,
         // including error responses returned before any further processing.
         Object origin = request.headers().get(Header.ORIGIN);
-        String allowOrigin = configuration.getOrDefault("cors.allowed.origins",
-                origin != null ? origin.toString() : "*");
+        String allowOrigin = getAllowOrigin(origin != null ? origin.toString() : null);
 
         if (!authenticateRequest(request, context)) {
             sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.", allowOrigin);
@@ -135,7 +164,9 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         ResponseBuilder response = new ResponseBuilder(new DefaultFullHttpResponse(HTTP_1_1, status), ctx);
 
         // Set CORS headers on the actual response
-        response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN.toString(), allowOrigin);
+        if (allowOrigin != null) {
+            response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN.toString(), allowOrigin);
+        }
         if (origin != null) {
             response.addHeader(HttpHeaderNames.VARY.toString(), "Origin");
         }
