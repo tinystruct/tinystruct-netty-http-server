@@ -47,9 +47,6 @@ import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import static org.tinystruct.http.Constants.HTTP_REQUEST;
-import static org.tinystruct.http.Constants.HTTP_RESPONSE;
-
 /**
  * NettyHttpServer is a Netty-based HTTP server implementation for the tinystruct framework.
  *
@@ -67,11 +64,12 @@ import static org.tinystruct.http.Constants.HTTP_RESPONSE;
  */
 public class NettyHttpServer extends AbstractApplication implements Bootstrap {
     private static final boolean SSL = System.getProperty("ssl") != null;
-    private static final int MAX_CONTENT_LENGTH = 1024 * 100;
+    private static final int MAX_CONTENT_LENGTH = 64 * 1024 * 1024; // 64 MB
     private final EventLoopGroup bossgroup;
     private final EventLoopGroup workgroup;
     private final Logger logger = Logger.getLogger(NettyHttpServer.class.getName());
     private int port = 8080;
+    private int maxContentLength = MAX_CONTENT_LENGTH;
     private ChannelFuture future;
 
     public NettyHttpServer() {
@@ -86,6 +84,9 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
 
     @Override
     public void init() {
+        if (this.getConfiguration().get("default.http.max_content_length") != null && !this.getConfiguration().get("default.http.max_content_length").isEmpty()) {
+            this.maxContentLength = Integer.parseInt(this.getConfiguration().get("default.http.max_content_length"));
+        }
         this.setTemplateRequired(false);
     }
 
@@ -96,6 +97,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
 
     @Action(value = "start", description = "Start up the netty-based http server.", options = {
             @Argument(key = "server-port", description = "Server port"),
+            @Argument(key = "max-content-length", description = "Max content length"),
             @Argument(key = "http.proxyHost", description = "Proxy host for http"),
             @Argument(key = "http.proxyPort", description = "Proxy port for http"),
             @Argument(key = "https.proxyHost", description = "Proxy host for https"),
@@ -109,6 +111,10 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
         if (getContext() != null) {
             if (getContext().getAttribute("--server-port") != null) {
                 this.port = Integer.parseInt(getContext().getAttribute("--server-port").toString());
+            }
+
+            if (getContext().getAttribute("--max-content-length") != null) {
+                this.maxContentLength = Integer.parseInt(getContext().getAttribute("--max-content-length").toString());
             }
 
             if (getContext().getAttribute("--http.proxyHost") != null && getContext().getAttribute("--http.proxyPort") != null) {
@@ -169,7 +175,7 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
                 sslCtx = null;
             }
 
-            final int maxContentLength = "".equalsIgnoreCase(settings.get("default.http.max_content_length")) ? MAX_CONTENT_LENGTH : Integer.parseInt(getConfiguration().get("default.http.max_content_length"));
+            final int maxContentLength = this.maxContentLength;
             ServerBootstrap bootstrap = new ServerBootstrap().group(bossgroup, workgroup).channel(Epoll.isAvailable() ? EpollServerSocketChannel.class : NioServerSocketChannel.class).childHandler(new ChannelInitializer<SocketChannel>() {
                 @Override
                 public void initChannel(SocketChannel ch) {
