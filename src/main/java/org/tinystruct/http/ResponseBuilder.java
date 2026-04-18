@@ -48,6 +48,7 @@ public class ResponseBuilder extends ResponseWrapper<FullHttpResponse, FullHttpR
         }
     }
 
+    @Override
     public void addCookie(Cookie cookie) {
         addHeader(Header.SET_COOKIE.name(), cookie.toString());
     }
