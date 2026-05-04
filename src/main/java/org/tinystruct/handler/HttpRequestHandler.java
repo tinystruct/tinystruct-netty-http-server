@@ -371,13 +371,12 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
         try {
             String query = request.query();
-            boolean isMCP = false;
-            if (query.equals(MCPSpecification.Endpoints.SSE)) {
-                isMCP = true;
-            }
-            if (query != null && query.length() > 1) {
+            boolean isMCP = query.equals(MCPSpecification.Endpoints.SSE);
+            if (query.length() > 1) {
                 query = StringUtilities.htmlSpecialChars(query);
-                Object call = ApplicationManager.call(query, context);
+                Method method = request.method();
+                Action.Mode mode = Action.Mode.fromName(method.name());
+                Object call = ApplicationManager.call(query, context, mode);
 
                 String sessionId = context.getId();
                 SSEPushManager pushManager = getAppropriatePushManager(isMCP);
