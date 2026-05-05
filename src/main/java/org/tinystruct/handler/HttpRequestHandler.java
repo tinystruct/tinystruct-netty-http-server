@@ -110,6 +110,12 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         Request<FullHttpRequest, Object> request = new RequestBuilder(original, ssl);
         Context context = new ApplicationContext();
         context.setId(request.getSession().getId());
+
+        if (!authenticateRequest(request, context)) {
+            sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.", allowOrigin);
+            return;
+        }
+
         this.service(ctx, request, context, keepAlive);
     }
 
@@ -145,13 +151,6 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             final Context context, boolean keepAlive) {
         // Compute CORS headers FIRST — they must be present on every response,
         // including error responses returned before any further processing.
-        Object origin = request.headers().get(Header.ORIGIN);
-        String allowOrigin = getAllowOrigin(origin != null ? origin.toString() : null);
-
-        if (!authenticateRequest(request, context)) {
-            sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.", allowOrigin);
-            return;
-        }
 
         String[] parameterNames = request.parameterNames();
         for (String parameter : parameterNames) {
@@ -162,17 +161,6 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
         HttpResponseStatus status = OK;
         ResponseBuilder response = new ResponseBuilder(new DefaultFullHttpResponse(HTTP_1_1, status), ctx);
-
-        // Set CORS headers on the actual response
-        if (allowOrigin != null) {
-            response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN.toString(), allowOrigin);
-        }
-        if (origin != null) {
-            response.addHeader(HttpHeaderNames.VARY.toString(), "Origin");
-        }
-        if ("true".equalsIgnoreCase(configuration.get("cors.allow.credentials"))) {
-            response.addHeader(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS.toString(), "true");
-        }
 
         String host = request.headers().get(Header.HOST).toString();
         Object message;
