@@ -98,7 +98,8 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             String maxAge = configuration.getOrDefault("cors.preflight.maxage", "3600");
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_MAX_AGE, maxAge);
 
-            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+            response.setStatus(HttpResponseStatus.NO_CONTENT);
+            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, -1);
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
             return;
         }
@@ -111,12 +112,14 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         Context context = new ApplicationContext();
         context.setId(request.getSession().getId());
 
+        // Compute CORS headers FIRST — they must be present on every response,
+        // including error responses returned before any further processing.
         if (!authenticateRequest(request, context)) {
-            sendErrorResponse(ctx, HttpResponseStatus.UNAUTHORIZED, "Invalid or expired token.", allowOrigin);
+            response.setStatus(HttpResponseStatus.UNAUTHORIZED);
+            sendErrorResponse(ctx, response, "Invalid or expired token.", allowOrigin);
             return;
         }
-
-        this.service(ctx, request, context, keepAlive);
+        this.service(ctx, context, request, new ResponseBuilder(response, ctx), keepAlive);
     }
 
     private String getAllowOrigin(String origin) {
@@ -147,20 +150,14 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         return null;
     }
 
-    private void service(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
-            final Context context, boolean keepAlive) {
-        // Compute CORS headers FIRST — they must be present on every response,
-        // including error responses returned before any further processing.
-
+    private void service(final ChannelHandlerContext ctx, final Context context, final Request<FullHttpRequest, Object> request,
+                         ResponseBuilder response, boolean keepAlive) {
         String[] parameterNames = request.parameterNames();
         for (String parameter : parameterNames) {
             if (parameter.startsWith("--")) {
                 context.setAttribute(parameter, request.getParameter(parameter));
             }
         }
-
-        HttpResponseStatus status = OK;
-        ResponseBuilder response = new ResponseBuilder(new DefaultFullHttpResponse(HTTP_1_1, status), ctx);
 
         String host = request.headers().get(Header.HOST).toString();
         Object message;
@@ -393,10 +390,9 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         }
     }
 
-    private void sendErrorResponse(ChannelHandlerContext ctx, HttpResponseStatus status, String message,
+    private void sendErrorResponse(ChannelHandlerContext ctx, HttpResponse response, String message,
             String allowOrigin) {
         ByteBuf content = copiedBuffer(message, CharsetUtil.UTF_8);
-        FullHttpResponse response = new DefaultFullHttpResponse(HTTP_1_1, status, content);
         response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
         response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
         // CORS header must be present even on error responses so the browser
