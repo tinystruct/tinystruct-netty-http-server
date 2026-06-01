@@ -28,9 +28,9 @@ import org.tinystruct.system.annotation.Action;
 import org.tinystruct.system.annotation.Action.Mode;
 import org.tinystruct.system.util.StringUtilities;
 
-import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
 import java.util.Objects;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static io.netty.buffer.Unpooled.copiedBuffer;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
@@ -51,9 +51,8 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         DiskAttribute.baseDirectory = null; // system temp directory
     }
 
+    private static final Logger logger = Logger.getLogger(HttpRequestHandler.class.getName());
     private final Configuration<String> configuration;
-    private static final String DATE_FORMAT_PATTERN = "yyyy-M-d h:m:s";
-    private static final SimpleDateFormat format = new SimpleDateFormat(DATE_FORMAT_PATTERN);
 
     public HttpRequestHandler(Configuration<String> configuration) {
         this.configuration = configuration;
@@ -78,6 +77,10 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
         }
 
+        // Expose specific headers for clients to read (e.g. MCP session ID)
+        String exposeHeaders = configuration.getOrDefault("cors.exposed.headers", MCPSpecification.Http.SESSION_ID + "," + MCPSpecification.Http.CONVERSATION_ID);
+        response.headers().set("Access-Control-Expose-Headers", exposeHeaders);
+
         // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
         if (original.method() == HttpMethod.OPTIONS) {
             // CORS preflight handling with configurability
@@ -99,7 +102,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_MAX_AGE, maxAge);
 
             response.setStatus(HttpResponseStatus.NO_CONTENT);
-            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, -1);
+            response.headers().remove(HttpHeaderNames.CONTENT_LENGTH);
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
             return;
         }
@@ -196,7 +199,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
             // Check if this is an SSE request
             if (isSSE(request)) {
-                handleSSE(ctx, request, response, context, keepAlive);
+                handleSSE(ctx, request, response, context);
                 return;
             }
 
@@ -294,7 +297,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 if (secret == null || secret.trim().isEmpty()) {
                     // jwt.secret is not configured — cannot validate Bearer token.
                     // Log a warning and reject the request to avoid using a weak/empty key.
-                    System.err.println("[WARNING] jwt.secret is not configured. " +
+                    logger.log(Level.WARNING, "jwt.secret is not configured. " +
                             "Bearer token authentication is disabled. " +
                             "Please set jwt.secret (>= 256-bit) in application.properties.");
                     return false;
@@ -308,7 +311,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                     try {
                         jwtManager.withTimezone(timezone);
                     } catch (NumberFormatException e) {
-                        System.err.println("[WARNING] Invalid jwt.timezone value: " + timezone);
+                        logger.log(Level.WARNING, "Invalid jwt.timezone value: " + timezone);
                     }
                 }
 
@@ -318,7 +321,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                     return true;
                 } catch (JwtException e) {
                     // Log authentication failure
-                    System.err.println("[WARNING] JWT validation failed: " + e.getMessage());
+                    logger.log(Level.WARNING, "JWT validation failed: " + e.getMessage());
                     return false;
                 }
             }
@@ -339,68 +342,117 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     }
 
     private void handleSSE(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
-                           Response<FullHttpResponse, FullHttpResponse> response, final Context context, boolean keepAlive) {
-        // Set SSE headers using the existing response infrastructure
-        response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream; charset=utf-8");
-        response.addHeader(Header.CACHE_CONTROL.name(), "no-cache");
-        response.addHeader(Header.CONNECTION.name(), "keep-alive");
-        response.addHeader(Header.TRANSFER_ENCODING.name(), "chunked");
-        response.addHeader("X-Accel-Buffering", "no");
+                           Response<FullHttpResponse, FullHttpResponse> response, final Context context) {
+        String query = request.query();
 
-        // CRITICAL: Write the SSE response headers first
-        HttpResponse initialResponse = new DefaultHttpResponse(HTTP_1_1, OK);
-        // Copy headers from our response to the initial response
-        FullHttpResponse fullResponse = response.get();
-        initialResponse.headers().setAll(fullResponse.headers());
-        ChannelFuture future = ctx.writeAndFlush(initialResponse);
+        // Guard against null/empty query before any processing
+        if (query == null || query.trim().isEmpty()) {
+            ByteBuf respBuf = copiedBuffer("Bad Request: missing query.", CharsetUtil.UTF_8);
+            FullHttpResponse errResponse = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST, respBuf);
+            errResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
+            errResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, respBuf.readableBytes());
+            ctx.writeAndFlush(errResponse).addListener(ChannelFutureListener.CLOSE);
+            return;
+        }
+
+        // Sanitize query before passing to ApplicationManager (mirrors service() path)
+        final String sanitizedQuery = StringUtilities.htmlSpecialChars(query);
 
         try {
-            String query = request.query();
-            boolean isMCP = query.equals(MCPSpecification.Endpoints.SSE);
-            if (query.length() > 1) {
-                query = StringUtilities.htmlSpecialChars(query);
-                Method method = request.method();
-                Action.Mode mode = Action.Mode.fromName(method.name());
-                Object call = ApplicationManager.call(query, context, mode);
+            // 1. Execute the action first — mirrors HttpServer.handleSSE ordering
+            Mode mode = Mode.fromName(request.method().name());
+            Object call = ApplicationManager.call(sanitizedQuery, context, mode);
 
-                String sessionId = context.getId();
-                SSEPushManager pushManager = getAppropriatePushManager(isMCP);
-                pushManager.register(sessionId, response);
-                if (call instanceof Builder) {
-                    pushManager.push(sessionId, (Builder) call);
-                } else if (call instanceof String) {
-                    Builder builder = new Builder();
-                    builder.parse((String) call);
-                    pushManager.push(sessionId, builder);
-                }
+            // Use parsed 'q' parameter for isMCP detection instead of raw query string
+            boolean isMCP = MCPSpecification.Endpoints.SSE.equals(query)
+                    || MCPSpecification.Endpoints.SSE.equals(sanitizedQuery);
+
+            String sessionId = context.getId();
+            SSEPushManager pushManager = getAppropriatePushManager(isMCP);
+
+            // 2. Attempt to register this channel as the persistent SSE stream for this session.
+            //    register() returns non-null only on the FIRST call for a given sessionId.
+            Object registration = pushManager.register(sessionId, response);
+
+            final boolean isNew = (registration != null);
+            if (isNew) {
+                // First connection for this session: set SSE headers and keep the channel open.
+                response.addHeader(Header.CONTENT_TYPE.name(), "text/event-stream; charset=utf-8");
+                response.addHeader(Header.CACHE_CONTROL.name(), "no-cache");
+                response.addHeader(Header.CONNECTION.name(), "keep-alive");
+                response.addHeader(Header.TRANSFER_ENCODING.name(), "chunked");
+                response.addHeader("X-Accel-Buffering", "no");
+
+                // Write headers-only response to establish the chunked stream, then push
+                // the first event only after the headers have been flushed to the client.
+                // This prevents the DefaultHttpContent chunk from racing ahead of the headers.
+                HttpResponse initialResponse = new DefaultHttpResponse(HTTP_1_1, OK);
+                initialResponse.headers().setAll(response.get().headers());
+
+                ctx.writeAndFlush(initialResponse).addListener((ChannelFutureListener) future -> {
+                    if (future.isSuccess()) {
+                        pushToManager(pushManager, sessionId, call);
+                    } else {
+                        logger.log(Level.WARNING, "SSE header flush failed for session: " + sessionId, future.cause());
+                        pushManager.remove(sessionId);
+                    }
+                });
+            } else {
+                // registration == null: a persistent stream already exists for this session.
+                // Push the result through the registered persistent channel immediately —
+                // in Netty mode SSEPushManager.push() writes a DefaultHttpContent directly
+                // to the persistent channel's ctx. Nothing is written on this connection.
+                pushToManager(pushManager, sessionId, call);
+
+                // 5. Return the result as a normal JSON response for this specific request and close it
+                ByteBuf respBuf = copiedBuffer(String.valueOf(call), CharsetUtil.UTF_8);
+                FullHttpResponse fullResponse = response.get().replace(respBuf);
+                fullResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=UTF-8");
+                fullResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, respBuf.readableBytes());
+
+                // Ensure this specific request's connection is closed after flushing
+                ctx.writeAndFlush(fullResponse).addListener(ChannelFutureListener.CLOSE);
             }
         } catch (ApplicationException e) {
-            // Send error event to client
-            String errorEvent = "event: error\ndata: " + e.getMessage() + "\n\n";
-            ByteBuf errorData = copiedBuffer(errorEvent, StandardCharsets.UTF_8);
-            DefaultHttpContent errorContent = new DefaultHttpContent(errorData);
-            ctx.writeAndFlush(errorContent);
-
-            // Log the exception but don't close the connection for SSE
-            System.err.println("SSE Application Exception: " + e.getMessage());
-        }
-        // For SSE, we keep the connection alive
-        if (!keepAlive) {
-            future.addListener(ChannelFutureListener.CLOSE);
+            ByteBuf respBuf = copiedBuffer(e.getMessage(), CharsetUtil.UTF_8);
+            FullHttpResponse fullResponse = new DefaultFullHttpResponse(HTTP_1_1,
+                    HttpResponseStatus.INTERNAL_SERVER_ERROR, respBuf);
+            fullResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=UTF-8");
+            fullResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, respBuf.readableBytes());
+            ctx.writeAndFlush(fullResponse).addListener(ChannelFutureListener.CLOSE);
+            logger.log(Level.WARNING, "SSE Application Exception: " + e.getMessage(), e);
         }
     }
 
-    private void sendErrorResponse(ChannelHandlerContext ctx, HttpResponse response, String message,
-            String allowOrigin) {
+    private void pushToManager(SSEPushManager pushManager, String sessionId, Object call) {
+        if (call instanceof Builder) {
+            pushManager.push(sessionId, (Builder) call);
+        } else if (call instanceof String) {
+            Builder builder = new Builder();
+            try {
+                builder.parse((String) call);
+                pushManager.push(sessionId, builder);
+            } catch (ApplicationException ignore) {
+                // If not a JSON builder, push as raw text if supported or ignore
+            }
+        } else if (call != null) {
+            logger.log(Level.WARNING, "pushToManager: unhandled call result type ''{0}'' for session ''{1}'' — result discarded.",
+                    new Object[]{call.getClass().getName(), sessionId});
+        }
+    }
+
+    private void sendErrorResponse(ChannelHandlerContext ctx, FullHttpResponse response, String message,
+                                   String allowOrigin) {
         ByteBuf content = copiedBuffer(message, CharsetUtil.UTF_8);
-        response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
-        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+        FullHttpResponse fullResponse = response.replace(content);
+        fullResponse.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=UTF-8");
+        fullResponse.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
         // CORS header must be present even on error responses so the browser
         // can read the status code and body instead of reporting a CORS failure.
         if (allowOrigin != null && !allowOrigin.isEmpty()) {
-            response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
+            fullResponse.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, allowOrigin);
         }
-        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+        ctx.writeAndFlush(fullResponse).addListener(ChannelFutureListener.CLOSE);
     }
 
     @Override
