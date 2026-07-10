@@ -107,6 +107,9 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
     }, example = "bin/dispatcher start --import org.tinystruct.system.NettyHttpServer --server-port 777", mode = Action.Mode.CLI)
     @Override
     public void start() throws ApplicationException {
+        if (this.getConfiguration().get("server.port") != null) {
+            port = Integer.parseInt(this.getConfiguration().get("server.port"));
+        }
 
         if (getContext() != null) {
             if (getContext().getAttribute("--server-port") != null) {
