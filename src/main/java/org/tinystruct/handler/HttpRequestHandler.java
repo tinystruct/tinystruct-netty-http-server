@@ -107,6 +107,26 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             return;
         }
 
+        // Enforce server name restriction if configured
+        String configuredServerName = configuration.get("server.name");
+        if (configuredServerName != null && !configuredServerName.trim().isEmpty()) {
+            String hostHeader = original.headers().get(HttpHeaderNames.HOST);
+            boolean hostAllowed = false;
+            if (hostHeader != null) {
+                for (String allowed : configuredServerName.split(",")) {
+                    if (hostHeader.equalsIgnoreCase(allowed.trim())) {
+                        hostAllowed = true;
+                        break;
+                    }
+                }
+            }
+            if (!hostAllowed) {
+                logger.warning("Rejected request: Host header '" + hostHeader + "' does not match any configured server.name '" + configuredServerName.trim() + "'");
+                sendErrorResponse(ctx, response, "Bad Request: Invalid server name.", allowOrigin);
+                return;
+            }
+        }
+
         // Decide whether to close the connection or not.
         boolean keepAlive = HttpUtil.isKeepAlive(original);
         boolean ssl = Boolean.parseBoolean(configuration.getOrDefault("ssl.enabled", "false"));
