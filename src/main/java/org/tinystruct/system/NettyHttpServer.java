@@ -107,16 +107,16 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
     }, example = "bin/dispatcher start --import org.tinystruct.system.NettyHttpServer --server-port 777", mode = Action.Mode.CLI)
     @Override
     public void start() throws ApplicationException {
-        if (this.getConfiguration().get("server.port") != null) {
+        if (this.getConfiguration().get("server.port") != null && !this.getConfiguration().get("server.port").trim().isEmpty()) {
             port = Integer.parseInt(this.getConfiguration().get("server.port"));
         }
 
         if (getContext() != null) {
-            if (getContext().getAttribute("--server-port") != null) {
+            if (getContext().getAttribute("--server-port") != null && !getContext().getAttribute("--server-port").toString().trim().isEmpty()) {
                 this.port = Integer.parseInt(getContext().getAttribute("--server-port").toString());
             }
 
-            if (getContext().getAttribute("--max-content-length") != null) {
+            if (getContext().getAttribute("--max-content-length") != null && !getContext().getAttribute("--max-content-length").toString().trim().isEmpty()) {
                 this.maxContentLength = Integer.parseInt(getContext().getAttribute("--max-content-length").toString());
             }
 
