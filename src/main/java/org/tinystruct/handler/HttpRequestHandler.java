@@ -19,8 +19,7 @@ import org.tinystruct.data.component.Builder;
 import org.tinystruct.http.*;
 import org.tinystruct.http.Cookie;
 import org.tinystruct.http.security.JWTManager;
-import org.tinystruct.mcp.MCPPushManager;
-import org.tinystruct.mcp.MCPSpecification;
+
 import org.tinystruct.system.ApplicationManager;
 import org.tinystruct.system.Configuration;
 import org.tinystruct.system.Language;
@@ -77,8 +76,8 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             response.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
         }
 
-        // Expose specific headers for clients to read (e.g. MCP session ID)
-        String exposeHeaders = configuration.getOrDefault("cors.exposed.headers", MCPSpecification.Http.SESSION_ID + "," + MCPSpecification.Http.CONVERSATION_ID);
+        // Expose specific response headers for clients to read (configure via cors.exposed.headers)
+        String exposeHeaders = configuration.getOrDefault("cors.exposed.headers", "");
         response.headers().set("Access-Control-Expose-Headers", exposeHeaders);
 
         // Handle CORS preflight (OPTIONS) requests up-front: these have no body.
@@ -354,12 +353,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         return acceptHeader != null && acceptHeader.toString().contains("text/event-stream");
     }
 
-    /**
-     * Helper to select the appropriate push manager based on isMCP flag.
-     */
-    private SSEPushManager getAppropriatePushManager(boolean isMCP) {
-        return isMCP ? MCPPushManager.getInstance() : SSEPushManager.getInstance();
-    }
+
 
     private void handleSSE(final ChannelHandlerContext ctx, final Request<FullHttpRequest, Object> request,
                            Response<FullHttpResponse, FullHttpResponse> response, final Context context) {
@@ -383,12 +377,11 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             Mode mode = Mode.fromName(request.method().name());
             Object call = ApplicationManager.call(sanitizedQuery, context, mode);
 
-            // Use parsed 'q' parameter for isMCP detection instead of raw query string
-            boolean isMCP = MCPSpecification.Endpoints.SSE.equals(query)
-                    || MCPSpecification.Endpoints.SSE.equals(sanitizedQuery);
-
             String sessionId = context.getId();
-            SSEPushManager pushManager = getAppropriatePushManager(isMCP);
+            Object pmAttr = context.getAttribute("sse.push.manager");
+            SSEPushManager pushManager = (pmAttr instanceof SSEPushManager)
+                    ? (SSEPushManager) pmAttr
+                    : SSEPushManager.getInstance();
 
             // 2. Attempt to register this channel as the persistent SSE stream for this session.
             //    register() returns non-null only on the FIRST call for a given sessionId.
