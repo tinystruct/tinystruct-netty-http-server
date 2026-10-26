@@ -179,6 +179,11 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
             }
 
             final int maxContentLength = this.maxContentLength;
+            String staticDirConfig = settings.get("server.static.dirs");
+            if (staticDirConfig == null || staticDirConfig.trim().isEmpty()) {
+                staticDirConfig = settings.getOrDefault("server.static.dir", HttpStaticFileHandler.DEFAULT_STATIC_DIR);
+            }
+            final String staticDir = staticDirConfig;
             ServerBootstrap bootstrap = new ServerBootstrap().group(bossgroup, workgroup).channel(Epoll.isAvailable() ? EpollServerSocketChannel.class : NioServerSocketChannel.class).childHandler(new ChannelInitializer<SocketChannel>() {
                 @Override
                 public void initChannel(SocketChannel ch) {
@@ -201,7 +206,8 @@ public class NettyHttpServer extends AbstractApplication implements Bootstrap {
                         p.addLast(new LoggingHandler(logLevel));
                     }
 
-                    p.addLast(new HttpServerCodec(), new HttpObjectAggregator(maxContentLength), new ChunkedWriteHandler(), new HttpStaticFileHandler(), new HttpRequestHandler(getConfiguration()));
+                    // Only files under server.static.dir (default: ./static) are served statically.
+                    p.addLast(new HttpServerCodec(), new HttpObjectAggregator(maxContentLength), new ChunkedWriteHandler(), new HttpStaticFileHandler(staticDir), new HttpRequestHandler(getConfiguration()));
                 }
             }).option(ChannelOption.SO_BACKLOG, 1024).option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1000).childOption(ChannelOption.SO_KEEPALIVE, false).childOption(ChannelOption.TCP_NODELAY, true);
 
