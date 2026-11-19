@@ -3,6 +3,7 @@ package org.tinystruct.handler;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.MalformedJwtException;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
@@ -19,6 +20,7 @@ import org.tinystruct.data.component.Builder;
 import org.tinystruct.http.*;
 import org.tinystruct.http.Cookie;
 import org.tinystruct.http.security.JWTManager;
+import org.tinystruct.http.security.TokenGuard;
 
 import org.tinystruct.system.ApplicationManager;
 import org.tinystruct.system.Configuration;
@@ -136,9 +138,10 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
 
         // Compute CORS headers FIRST — they must be present on every response,
         // including error responses returned before any further processing.
-        if (!authenticateRequest(request, context)) {
-            response.setStatus(HttpResponseStatus.UNAUTHORIZED);
-            sendErrorResponse(ctx, response, "Invalid or expired token.", allowOrigin);
+        ResponseStatus authStatus = authenticateRequest(request, context);
+        if (authStatus != ResponseStatus.OK) {
+            response.setStatus(HttpResponseStatus.valueOf(authStatus.code()));
+            sendErrorResponse(ctx, response, authStatus == ResponseStatus.UNAUTHORIZED ? "Invalid or expired token." : authStatus.toString(), allowOrigin);
             return;
         }
         this.service(ctx, context, request, new ResponseBuilder(response, ctx), keepAlive);
@@ -305,7 +308,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         }
     }
 
-    private boolean authenticateRequest(Request<FullHttpRequest, Object> request, Context context) {
+    private ResponseStatus authenticateRequest(Request<FullHttpRequest, Object> request, Context context) {
         Object authorization;
         if ((authorization = request.headers().get(Header.AUTHORIZATION)) != null) {
             String authHeader = authorization.toString();
@@ -313,6 +316,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 String token = authHeader.substring(7);
 
                 JWTManager jwtManager = new JWTManager();
+                jwtManager.withTokenGuard(new TokenGuard(this.configuration));
                 String publicKey = configuration.get("jwt.key.public");
                 String secret = configuration.get("jwt.secret");
 
@@ -330,7 +334,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                     logger.log(Level.WARNING, "Neither jwt.key.public nor jwt.secret is configured. " +
                             "Bearer token authentication is disabled. " +
                             "Please set jwt.secret (>= 256-bit) or jwt.key.public in application.properties.");
-                    return false;
+                    return ResponseStatus.UNAUTHORIZED;
                 }
 
                 String timezone = configuration.get("jwt.timezone");
@@ -345,15 +349,21 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
                 try {
                     Jws<Claims> claims = jwtManager.parseToken(token);
                     context.setAttribute("CLAIMS", claims);
-                    return true;
+                    return ResponseStatus.OK;
+                } catch (JWTManager.BlockedTokenException e) {
+                    logger.log(Level.WARNING, "Token blocked: " + e.getMessage());
+                    return ResponseStatus.FORBIDDEN;
+                } catch (MalformedJwtException | IllegalArgumentException e) {
+                    logger.log(Level.WARNING, "JWT validation failed: " + e.getMessage());
+                    return ResponseStatus.BAD_REQUEST;
                 } catch (JwtException e) {
                     // Log authentication failure
                     logger.log(Level.WARNING, "JWT validation failed: " + e.getMessage());
-                    return false;
+                    return ResponseStatus.UNAUTHORIZED;
                 }
             }
         }
-        return true; // Allow requests without a token
+        return ResponseStatus.OK; // Allow requests without a token
     }
 
     private boolean isSSE(Request<FullHttpRequest, Object> request) {
